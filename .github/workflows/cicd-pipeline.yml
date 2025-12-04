@@ -1,6 +1,5 @@
 name: CI/CD Pipeline for Microservices
 
-# --- Triggers ---
 on:
   push:
     branches: [ "main" ]
@@ -8,29 +7,23 @@ on:
     branches: [ "main" ]
 
 jobs:
-  # --- 1. Test Job ---
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         service: [ 'service-a', 'service-b' ]
-
     steps:
     - name: Check out code
       uses: actions/checkout@v4
-
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-
     - name: Install dependencies
       run: pip install -r ${{ matrix.service }}/requirements.txt
-
     - name: Run unit tests
       run: python -m pytest ${{ matrix.service }}/
 
-  # --- 2. Build and Push Job ---
   build-and-push:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -38,29 +31,23 @@ jobs:
     strategy:
       matrix:
         service: [ 'service-a', 'service-b' ]
-
     permissions:
       contents: read
       packages: write
-
     steps:
     - name: Check out code
       uses: actions/checkout@v4
-
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
-
     - name: Lowercase repo name
       id: repo-lower
       run: echo "name=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
@@ -71,41 +58,34 @@ jobs:
           ghcr.io/${{ steps.repo-lower.outputs.name }}/${{ matrix.service }}:${{ github.sha }}
           ghcr.io/${{ steps.repo-lower.outputs.name }}/${{ matrix.service }}:latest
 
-  # --- 3. Deploy Job ---
   deploy:
     needs: build-and-push
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-
     permissions:
       packages: read
-
     steps:
     - name: Check out code
       uses: actions/checkout@v4
-
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-
     - name: Lowercase repo name
       id: repo-lower
       run: echo "name=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-
     - name: Set image names as env variables
       run: |
         echo "SERVICE_A_IMAGE=ghcr.io/${{ steps.repo-lower.outputs.name }}/service-a:${{ github.sha }}" >> $GITHUB_ENV
         echo "SERVICE_B_IMAGE=ghcr.io/${{ steps.repo-lower.outputs.name }}/service-b:${{ github.sha }}" >> $GITHUB_ENV
-
+    
+    # --- HERE ARE THE CRITICAL FIXES (Note: NO hyphens in docker compose) ---
     - name: Run services using docker compose
-      # FIXED: Changed 'docker-compose' to 'docker compose'
       run: docker compose up -d
 
     - name: Verify deployment
-      # FIXED: Changed 'docker-compose' to 'docker compose' in failure handlers
       run: |
         echo "Waiting for services to start..."
         sleep 10
@@ -117,12 +97,8 @@ jobs:
 
     - name: Show logs (on success)
       if: success()
-      # FIXED: Changed 'docker-compose' to 'docker compose'
       run: docker compose logs
 
     - name: Stop services
       if: always()
-      # FIXED: Changed 'docker-compose' to 'docker compose'
       run: docker compose down
-```
-
