@@ -1,0 +1,3 @@
+# Our dependencies for Service B
+Flask
+pytest
