@@ -1,10 +1,6 @@
-# This is our main CI/CD pipeline.
 name: CI/CD Pipeline for Microservices
 
 # --- Triggers ---
-# This workflow runs on:
-# 1. Pushes to the 'main' branch (e.g., after a PR is merged).
-# 2. Pull Requests targeting the 'main' branch.
 on:
   push:
     branches: [ "main" ]
@@ -13,12 +9,8 @@ on:
 
 jobs:
   # --- 1. Test Job ---
-  # This job runs our unit tests. It runs on both 'push' and 'pull_request'.
   test:
     runs-on: ubuntu-latest
-    
-    # We use a matrix strategy to test all our services.
-    # If you add 'service-c', just add it to this list.
     strategy:
       matrix:
         service: [ 'service-a', 'service-b' ]
@@ -33,96 +25,66 @@ jobs:
         python-version: '3.10'
 
     - name: Install dependencies
-      # Install dependencies for the specific service from the matrix
       run: pip install -r ${{ matrix.service }}/requirements.txt
 
     - name: Run unit tests
-      # Run pytest for the specific service
       run: python -m pytest ${{ matrix.service }}/
 
   # --- 2. Build and Push Job ---
-  # This job builds the Docker images and pushes them to the GitHub Container Registry (GHCR).
   build-and-push:
-    # This job only runs if the 'test' job passes.
     needs: test
-    
-    # We only want to build and push on an actual merge/push to 'main',
-    # not on every pull request commit.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
     runs-on: ubuntu-latest
-    
-    # We use a matrix for this job too, to build both images.
     strategy:
       matrix:
         service: [ 'service-a', 'service-b' ]
 
-    # --- Permissions ---
-    # We need to grant the GITHUB_TOKEN permissions to write to GHCR.
     permissions:
       contents: read
-      packages: write # This is the crucial one for GHCR
+      packages: write
 
     steps:
     - name: Check out code
       uses: actions/checkout@v4
 
     - name: Log in to GitHub Container Registry
-      # This action logs us into GHCR using a temporary token.
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
-        # 'github.actor' is the username of the person who triggered the action.
-        # 'secrets.GITHUB_TOKEN' is automatically generated for each workflow run.
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Set up Docker Buildx
-      # This sets up the buildx builder, which is more advanced.
       uses: docker/setup-buildx-action@v3
 
     - name: Lowercase repo name
-      # GHCR is picky and wants the repository owner (your username/org)
-      # to be all lowercase.
       id: repo-lower
       run: echo "name=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
     - name: Build and push Docker image
-      # This is the main build-and-push action.
       uses: docker/build-push-action@v5
       with:
-        context: ./${{ matrix.service }} # The directory to build from
-        file: ./${{ matrix.service }}/Dockerfile # The path to the Dockerfile
-        push: true # We actually want to push the image
+        context: ./${{ matrix.service }}
+        file: ./${{ matrix.service }}/Dockerfile
+        push: true
         tags: |
-          # We'll create two tags for each image:
-          # 1. A unique tag based on the commit SHA (e.g., ghcr.io/user/repo/service-a:a1b2c3d)
-          # 2. A 'latest' tag (e.g., ghcr.io/user/repo/service-a:latest)
           ghcr.io/${{ steps.repo-lower.outputs.name }}/${{ matrix.service }}:${{ github.sha }}
           ghcr.io/${{ steps.repo-lower.outputs.name }}/${{ matrix.service }}:latest
 
   # --- 3. Deploy Job ---
-  # This job simulates a deployment by running the containers in the workflow runner.
   deploy:
-    # This job only runs after 'build-and-push' is successful.
     needs: build-and-push
-    
-    # We only run this on a 'push' event (not PRs).
     if: github.event_name == 'push'
-    
     runs-on: ubuntu-latest
 
-    # We need permission to read packages (pull images from GHCR).
     permissions:
       packages: read
 
     steps:
     - name: Check out code
-      # We need the docker-compose.yml file.
       uses: actions/checkout@v4
 
     - name: Log in to GitHub Container Registry
-      # We need to log in again to be able to PULL the images.
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
@@ -130,27 +92,18 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Lowercase repo name
-      # Need this again to construct the image names.
       id: repo-lower
       run: echo "name=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
     - name: Set image names as env variables
-      # We set environment variables with the full image paths.
-      # The docker-compose.yml file will use these.
       run: |
         echo "SERVICE_A_IMAGE=ghcr.io/${{ steps.repo-lower.outputs.name }}/service-a:${{ github.sha }}" >> $GITHUB_ENV
         echo "SERVICE_B_IMAGE=ghcr.io/${{ steps.repo-lower.outputs.name }}/service-b:${{ github.sha }}" >> $GITHUB_ENV
 
     - name: Run services using docker-compose
-      # This command pulls the images specified in the env vars
-      # and starts them in the background (-d = detached mode).
       run: docker-compose up -d
 
     - name: Verify deployment
-      # We wait a few seconds for the services to boot up,
-      # then hit their endpoints with curl to make sure they're alive.
-      # The '||' and 'docker-compose logs' part means: if curl fails, dump
-      # the container logs so we can debug, and then fail the step.
       run: |
         echo "Waiting for services to start..."
         sleep 10
@@ -161,12 +114,9 @@ jobs:
         echo "\nDeployment verification successful!"
 
     - name: Show logs (on success)
-      # Just so we can see the output if everything worked.
       if: success()
       run: docker-compose logs
 
     - name: Stop services
-      # Clean up the runner by stopping and removing the containers.
-      # This 'if: always()' ensures this step runs even if the 'verify' step failed.
       if: always()
       run: docker-compose down
